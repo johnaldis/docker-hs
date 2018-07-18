@@ -135,7 +135,9 @@ data Endpoint =
       | DeleteContainerEndpoint ContainerDeleteOpts ContainerID
       | InspectContainerEndpoint ContainerID
       | BuildImageEndpoint BuildOpts FilePath
-      | CreateImageEndpoint T.Text Tag (Maybe T.Text) -- ^ Either pull an image from docker hub or imports an image from a tarball (or URL)
+      | CreateImageEndpoint T.Text Tag (Maybe FilePath) -- ^ Either pull an image from docker hub or imports an image from a tarball (or URL)
+      | GetImageEndpoint ImageID FilePath
+      | InspectImageEndpoint Text
       | DeleteImageEndpoint ImageDeleteOpts ImageID
       | CreateNetworkEndpoint CreateNetworkOpts
       | RemoveNetworkEndpoint NetworkID
@@ -770,7 +772,7 @@ data ContainerDeleteOpts = ContainerDeleteOpts {
 -- TODO: Add support for container build constraints
 -- | Options for when building images from a Dockerfile
 data BuildOpts = BuildOpts {
-                 buildImageName               :: Text -- ^ Image name in the form of name:tag; ie. myimage:latest.:w
+                 buildImageName               :: Text -- ^ Image name in the form of name:tag; ie. myimage:latest.
                , buildDockerfileName          :: Text -- ^ Name of dockerfile (default: Dockerfile)
                , buildQuiet                   :: Bool
                , buildNoCache                 :: Bool -- ^ Do not use cache when building the image.

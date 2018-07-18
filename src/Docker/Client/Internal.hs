@@ -71,11 +71,18 @@ getEndpoint v (BuildImageEndpoint o _) = encodeURLWithQuery [v, "build"] query
               rm = encodeQ $ show $ buildRemoveItermediate o
               forcerm = encodeQ $ show $ buildForceRemoveIntermediate o
               pull = encodeQ $ show $ buildPullParent o
-getEndpoint v (CreateImageEndpoint name tag _) = encodeURLWithQuery [v, "images", "create"] query
+getEndpoint v (CreateImageEndpoint name tag Nothing) = encodeURLWithQuery [v, "images", "create"] query
         where query = [("fromImage", Just n), ("tag", Just t)]
               n = encodeQ $ T.unpack name
               t = encodeQ $ T.unpack tag
-getEndpoint v (DeleteImageEndpoint _ cid) = encodeURL [v, "images", fromImageID cid]
+getEndpoint v (CreateImageEndpoint repo tag (Just _)) = encodeURLWithQuery [v, "images", "create"] query
+        where query = [("fromSrc", Just hyphen), ("tag", Just t), ("repo", Just r)]
+              r = encodeQ $ T.unpack repo
+              hyphen = encodeQ "-"
+              t = encodeQ $ T.unpack tag
+getEndpoint v (GetImageEndpoint iid _) = encodeURL [v, "images", fromImageID iid, "get"]
+getEndpoint v (InspectImageEndpoint name) = encodeURL [v, "images", name, "json"]
+getEndpoint v (DeleteImageEndpoint _ iid) = encodeURL [v, "images", fromImageID iid]
 getEndpoint v (CreateNetworkEndpoint _) = encodeURL [v, "networks", "create"]
 getEndpoint v (RemoveNetworkEndpoint nid) = encodeURL [v, "networks", fromNetworkID nid]
 
@@ -96,8 +103,11 @@ getEndpointRequestBody (DeleteContainerEndpoint _ _) = Nothing
 getEndpointRequestBody (InspectContainerEndpoint _) = Nothing
 
 getEndpointRequestBody (BuildImageEndpoint _ fp) = Just $ requestBodySourceChunked $ CB.sourceFile fp
-getEndpointRequestBody (CreateImageEndpoint _ _ _) = Nothing
+getEndpointRequestBody (CreateImageEndpoint _ _ Nothing) = Nothing
+getEndpointRequestBody (CreateImageEndpoint _ _ (Just fp)) = Just $ requestBodySourceChunked $ CB.sourceFile fp
 getEndpointRequestBody (DeleteImageEndpoint _ _) = Nothing
+getEndpointRequestBody (GetImageEndpoint _ _) = Nothing
+getEndpointRequestBody (InspectImageEndpoint _) = Nothing
 
 getEndpointRequestBody (CreateNetworkEndpoint opts) = Just $ HTTP.RequestBodyLBS (JSON.encode opts)
 getEndpointRequestBody (RemoveNetworkEndpoint _) = Nothing
