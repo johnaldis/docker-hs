@@ -11,6 +11,7 @@ import           Control.Monad               (filterM, liftM, unless)
 import           Control.Monad.IO.Class
 import qualified Data.ByteString.Lazy        as BS
 import           Data.Monoid                 ((<>))
+import           Data.Maybe
 import qualified Data.Text                   as T
 import qualified Data.Text.IO                as TIO
 import qualified Data.UUID                   as UUID
@@ -31,11 +32,10 @@ type File = FilePath
 data DirTree = DirTree [File] [DirTree]
 
 
-newtype ExclusionPattern = ExclusionPattern T.Text deriving (Eq, Show)
-newtype InclusionPattern = InclusionPattern T.Text deriving (Eq, Show)
+data ClusionPattern = ExclusionPattern T.Text |
+                      InclusionPattern T.Text deriving (Eq, Show)
 
-data DockerIgnore = DockerIgnore { exclusionPatterns :: [ExclusionPattern]
-                                 , inclusionPatterns :: [InclusionPattern]
+data DockerIgnore = DockerIgnore { clusionPatterns :: [ClusionPattern]
                                  } deriving (Eq, Show)
 
 newtype BuildContextRootDir = BuildContextRootDir FilePath deriving (Eq, Show)
@@ -55,12 +55,13 @@ makeBuildContext' (BuildContextRootDir base) = do
     liftIO $ BS.writeFile tmpF . GZip.compress . Tar.write =<< Tar.pack base relFs
     return tmpF
 
+toClusionPattern :: T.Text -> ClusionPattern
+toClusionPattern p = if T.isPrefixOf "!" p then InclusionPattern p else ExclusionPattern p
+
 parseDockerIgnoreFile :: T.Text -> DockerIgnore
-parseDockerIgnoreFile c = DockerIgnore{ exclusionPatterns=parseExclusions
-                                      , inclusionPatterns=parseInclusions}
+parseDockerIgnoreFile c = DockerIgnore{ clusionPatterns=parseClusions }
     where lines = filter (not . T.isPrefixOf "#") (T.lines c) -- Ignore comments
-          parseExclusions = map ExclusionPattern $ filter (\l -> not (T.isPrefixOf "!" l) && (l /= "")) lines
-          parseInclusions = map (InclusionPattern . T.drop 1) $ filter (\l -> T.isPrefixOf "!" l && (l /= "")) lines
+          parseClusions = map toClusionPattern $ filter (\l -> (l /= "")) lines
 
 getBuildContext :: BuildContextRootDir -> IO [FilePath]
 getBuildContext (BuildContextRootDir base) = do
@@ -71,7 +72,7 @@ getBuildContext (BuildContextRootDir base) = do
     unless (exists && abs) $ fail "Path to context needs to be a directory that: exists, is readable, and is an absolute path."
     di <- find always (fileName ==? ".dockerignore") base
     dockerignore <- case di of
-        [] -> return $ DockerIgnore [] []
+        [] -> return $ DockerIgnore []
         -- This should not return more than one result though
         (x:_) -> do
             c <- TIO.readFile x
@@ -88,44 +89,17 @@ getBuildContext (BuildContextRootDir base) = do
 
 shouldInclude :: DockerIgnore -> FilterPredicate
 shouldInclude d = check `liftM` fileName
-    where check f = dockerIgnoreDecision (exclusionCheck f (exclusionPatterns d), inclusionCheck f (inclusionPatterns d))
+    where check f = clusionCheck f (clusionPatterns d)
 
 shouldRecurse :: DockerIgnore -> RecursionPredicate
 shouldRecurse d = check `liftM` fileName
-    where check f = dockerIgnoreDecision (exclusionCheck f (exclusionPatterns d), inclusionCheck f (inclusionPatterns d))
+    where check f = clusionCheck f (clusionPatterns d)
 
--- TODO: We don't handle precedence rules. For instance a dockerignore file
--- like this:
---
--- *.md
--- !README*.md
--- README-secret.md
---
--- Should result in no markdown files being included in the context except README files other
--- than README-secret.md. FIXME: OUR implementation would in fact include
--- README-secret.md as well!!!
---
--- Whereas this:
---
--- *.md
--- README-secret.md
--- !README*.md
---
--- Should result in all of the README files being included. The middle line has no effect
--- because !README*.md matches README-secret.md and comes last. Our
--- implementation will result in the same thing.
-dockerIgnoreDecision :: (Bool, Bool) -> Bool
-dockerIgnoreDecision p = case p of
-         -- If it's in any of the exclusion patterns but also
-         -- in any of the inclusion patterns then laeave it
-         (True, True)   -> True
-         (True, False)  -> False
-         (False, True)  -> True
-         (False, False) -> True
+oneClusionCheck :: FilePath -> ClusionPattern -> Maybe Bool
+oneClusionCheck f (ExclusionPattern p) = if f ~~ T.unpack p then Just False else Nothing
+oneClusionCheck f (InclusionPattern p) = if f ~~ T.unpack p then Just True else Nothing
 
-exclusionCheck :: FilePath -> [ExclusionPattern] -> Bool
-exclusionCheck f ps = any id (map (\(ExclusionPattern p) -> f ~~ T.unpack p) ps)
-
-inclusionCheck :: FilePath -> [InclusionPattern] -> Bool
-inclusionCheck f ps = any id (map (\(InclusionPattern p) -> f ~~ T.unpack p) ps)
-
+clusionCheck :: FilePath -> [ClusionPattern] -> Bool
+clusionCheck f ps = case mapMaybe (oneClusionCheck f) (reverse ps) of
+    [] -> True  -- default to include
+    (clude:_) -> clude
